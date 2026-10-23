@@ -50,7 +50,22 @@
 #define NPAIR ((K + 1) / 2) /* k 方向两两配对的组数（vpmaddwd 一次算 2 个 k） */
 
 #ifndef KS /* B 条带宽度（k 方向），需为偶数保证打包对齐；实测 128~1024 差异在噪声内 */
-#define KS 512
+#define KS 2048
+#endif
+
+#ifndef PREF_PARSE /* 解析流式预取开关（编译期常量，0/1 A/B 用） */
+#define PREF_PARSE 0
+#endif
+#ifndef PREF_PANEL /* 微核面板预取开关（BLIS prefetch-next-panel 风格） */
+#define PREF_PANEL 0
+#endif
+#ifndef ASM16
+#define ASM16 1
+#endif
+#ifndef SB /* i0 超级块：组内行块的 A 面板（每组 SB×MR 行 ≈ SB×24KB）驻留
+            * L2 跨全部列块复用；0=关闭。单条带（KS≥K）时若不分组，
+            * 每列块扫描都要把 4.2MB 的 A 从 L3 流一遍（64 次共 ~268MB） */
+#define SB 16
 #endif
 
 /* 输入文件固定 4096 行（行号从 0 起）：#A 第 0 行，#B 第 1024 行，#C 第 3072 行 */
@@ -76,12 +91,31 @@ static void *xmalloc(size_t n)
     return p;
 }
 
-static void *xcalloc(size_t n, size_t sz)
+/* 大缓冲区专用：2MB 对齐 + MADV_HUGEPAGE 的匿名映射（内容为零，等价 calloc）。
+ * 本机实测 4K 首触 672ns/页 → THP 后 328ns/页（减半），且 DTLB 压力大减；
+ * 截去首尾使 [al, al+sz) 恰好 2MB 对齐、可整段大页缺页。进程退出即归还，
+ * 不走 free()。小于 2MB 的分配退回普通 malloc（THP 无从生效）。 */
+static void *xalloc_huge(size_t sz)
 {
-    void *p = calloc(n ? n : 1, sz);
-    if (!p)
-        die("out of memory");
-    return p;
+    const size_t HP = (size_t)2 << 20;
+    if (sz < HP)
+        return xmalloc(sz);
+    const size_t tot = sz + 2 * HP; /* 头尾各留一个 2MB 余量用于对齐 */
+    unsigned char *base = mmap(NULL, tot, PROT_READ | PROT_WRITE,
+                               MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (base == MAP_FAILED)
+        return xmalloc(sz);
+    unsigned char *al =
+        (unsigned char *)(((uintptr_t)base + HP - 1) & ~(uintptr_t)(HP - 1));
+    if (al > base)
+        munmap(base, (size_t)(al - base));
+    const size_t kept = (sz + 4095) & ~(size_t)4095;
+    if (al + kept < base + tot)
+        munmap(al + kept, (size_t)((base + tot) - (al + kept)));
+#ifdef MADV_HUGEPAGE
+    madvise(al, kept, MADV_HUGEPAGE);
+#endif
+    return al;
 }
 
 /* 只读私有 mmap 整个文件，返回映射首地址与文件长度 */
@@ -126,6 +160,7 @@ static const char *map_file(const char *path, size_t *out_len)
             const __m128i v0 = _mm_loadu_si128((const __m128i *)p);                 \
             const __m128i v1 = _mm_loadu_si128((const __m128i *)(p + 1));           \
             const __m128i v2 = _mm_loadu_si128((const __m128i *)(p + 2));           \
+            if (PREF_PARSE) __builtin_prefetch(p + 256); /* 流式预读（1BRC 类 +6~8%） */\
             const __m128i sp = _mm_or_si128(                                        \
                 _mm_cmpeq_epi8(v0, _mm_set1_epi8(' ')),                             \
                 _mm_cmpeq_epi8(v0, _mm_set1_epi8('\n')));                           \
@@ -238,46 +273,51 @@ static void block_layout(int nproc, int total, int stride, int *cnt, int *dsp)
     }
 }
 
-/* 两位数字查表（fmt/jeaiii 风格 itoa）：100 组 "00".."99"，除法按 100 的幂
- * 折半处理，比逐位除 10 快约一倍；init_digit_pairs() 先行初始化 */
-static char g_pairs[200];
+/* 四位数字查表 + 无分支 itoa（miloyip/branchlut + Lemire 风格）。
+ * 实测教训：D 值标准差约 ±27 万（6~7 位居多、正负各半），逐级比较求位数
+ * 与 v<0 判断都是 ~50/50 分支，1M 次格式化的真实瓶颈是误预测罚分——
+ * 位数改用 lzcnt 查表 + cmov 级校正（est[L]=digits(2^L-1)，再减
+ * "u<10^(est-1)" 的无分支修正）；符号用 xor 取绝对值 + 恒写 '-' 再由
+ * 数字存储覆盖。除法按 10^4 一组，一次 memcpy（单条 32 位 mov）。 */
+static char g_quad[40000];
+static const uint8_t g_est[32] = { /* 按 u|1 的位长 L=32-clz 索引（下标 0 不用） */
+    0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4, 4, 5, 5,
+    5, 6, 6, 6, 7, 7, 7, 7, 8, 8, 8, 9, 9, 9, 10, 10
+};
+static const uint32_t g_p10[11] = { 1, 10, 100, 1000, 10000, 100000, 1000000,
+                                    10000000, 100000000U, 1000000000U, 0 };
 
 static void init_digit_pairs(void)
 {
-    for (int i = 0; i < 100; i++) {
-        g_pairs[2 * i] = (char)('0' + i / 10);
-        g_pairs[2 * i + 1] = (char)('0' + i % 10);
+    for (int i = 0; i < 10000; i++) {
+        g_quad[4 * i] = (char)('0' + i / 1000);
+        g_quad[4 * i + 1] = (char)('0' + (i / 100) % 10);
+        g_quad[4 * i + 2] = (char)('0' + (i / 10) % 10);
+        g_quad[4 * i + 3] = (char)('0' + i % 10);
     }
 }
 
 static size_t put_int(char *dst, int v)
 {
-    size_t n = 0;
-    unsigned u;
-    if (v < 0) {
-        dst[n++] = '-';
-        u = 0U - (unsigned)v;
-    } else {
-        u = (unsigned)v;
+    const unsigned sign = (unsigned)v >> 31; /* 无分支取绝对值 */
+    unsigned u = ((unsigned)v ^ (0U - sign)) + sign;
+    const int L = 32 - __builtin_clz(u | 1);
+    int d = g_est[L];
+    d -= (u < g_p10[d - 1]); /* cmov 级校正，无分支 */
+    d |= (u == 0);           /* u=0 时 d 归 0，补回 1 */
+    char *q = dst + sign + d; /* 尾后指针，从后往前成组写 */
+    while (u >= 10000) {
+        const unsigned r = u % 10000;
+        u /= 10000;
+        q -= 4;
+        memcpy(q, &g_quad[4 * r], 4);
     }
-    int d = (u < 10) ? 1 : (u < 100) ? 2 : (u < 1000) ? 3 : (u < 10000) ? 4
-          : (u < 100000) ? 5 : (u < 1000000) ? 6 : (u < 10000000) ? 7
-          : (u < 100000000U) ? 8 : (u < 1000000000U) ? 9 : 10;
-    size_t pos = n + d;
-    char *p = dst + pos;
-    while (u >= 100) {
-        const unsigned r = u % 100;
-        u /= 100;
-        *--p = g_pairs[2 * r + 1];
-        *--p = g_pairs[2 * r];
-    }
-    if (u >= 10) {
-        *--p = g_pairs[2 * u + 1];
-        *--p = g_pairs[2 * u];
-    } else {
-        *--p = (char)('0' + u);
-    }
-    return pos;
+    /* 尾组有效位数 = ((d-1) mod 4)+1；负号恒写 dst[0]（无分支），
+     * 非负时数字恰好从 dst[0] 写起、将其覆盖（d = 4×循环组数 + tl 恒成立） */
+    const int tl = ((d - 1) % 4) + 1;
+    dst[0] = '-';
+    memcpy(q - tl, &g_quad[4 * u + (4 - tl)], tl);
+    return sign + d;
 }
 
 /* GCC 向量扩展：8×int32 = 一个 ymm；memcpy 会被编译为单条 vmovdqu */
@@ -351,6 +391,10 @@ DEF_MICRO(tail, K % KS) /* 尾条带 */
 static void pack_b16_range(const int16_t *restrict Bs, int16_t *restrict Bp16, int ks,
                            int srows, int *bmax)
 {
+    /* 向量化主路：unpacklo/hi 恰好生成 8 列的 k-对交错面板行（[b_{k0,j},
+     * b_{k1,j}] 相邻两 int16 = 一个 int32 通道）；bmax 向量绝对值累积后
+     * 水平归约。边界（尾列块 1023 边、奇数尾 k 行）落回标量补零路径。 */
+    __m256i vmax = _mm256_setzero_si256();
     for (int jt = 0; jt < NPAD; jt += NR) {
         int16_t *restrict base =
             Bp16 + (size_t)(jt / NR) * NPAIR * 2 * 16; /* 面板号 = jt/NR */
@@ -358,27 +402,49 @@ static void pack_b16_range(const int16_t *restrict Bs, int16_t *restrict Bp16, i
         for (int p = p0; p < p1; p++) {
             const int r0 = 2 * p - ks, r1 = r0 + 1;
             for (int h = 0; h < 2; h++) {
+                const int col0 = jt + h * 8;
                 int16_t *restrict dst = base + (p * 2 + h) * 16;
-                for (int t = 0; t < 8; t++) {
-                    const int col = jt + h * 8 + t;
-                    int v0 = 0, v1 = 0;
-                    if (col < N) {
-                        if (r0 < srows)
-                            v0 = Bs[(size_t)r0 * N + col];
-                        if (r1 < srows)
-                            v1 = Bs[(size_t)r1 * N + col];
+                if (col0 + 8 <= N && r1 < srows) { /* 内部快路 */
+                    const __m128i v0 = _mm_loadu_si128(
+                        (const __m128i *)(Bs + (size_t)r0 * N + col0));
+                    const __m128i v1 = _mm_loadu_si128(
+                        (const __m128i *)(Bs + (size_t)r1 * N + col0));
+                    const __m256i w = _mm256_insertf128_si256(
+                        _mm256_castsi128_si256(_mm_unpacklo_epi16(v0, v1)),
+                        _mm_unpackhi_epi16(v0, v1), 1);
+                    _mm256_storeu_si256((__m256i *)dst, w);
+                    vmax = _mm256_max_epi16(vmax, _mm256_abs_epi16(w));
+                } else { /* 边界标量（右侧补零 / 奇数尾 k 行） */
+                    for (int t = 0; t < 8; t++) {
+                        const int col = col0 + t;
+                        int v0 = 0, v1 = 0;
+                        if (col < N) {
+                            if (r0 < srows)
+                                v0 = Bs[(size_t)r0 * N + col];
+                            if (r1 < srows)
+                                v1 = Bs[(size_t)r1 * N + col];
+                        }
+                        int a0 = v0 < 0 ? -v0 : v0, a1 = v1 < 0 ? -v1 : v1;
+                        if (a0 > *bmax)
+                            *bmax = a0;
+                        if (a1 > *bmax)
+                            *bmax = a1;
+                        dst[2 * t] = (int16_t)v0;
+                        dst[2 * t + 1] = (int16_t)v1;
                     }
-                    int a0 = v0 < 0 ? -v0 : v0, a1 = v1 < 0 ? -v1 : v1;
-                    if (a0 > *bmax)
-                        *bmax = a0;
-                    if (a1 > *bmax)
-                        *bmax = a1;
-                    dst[2 * t] = (int16_t)v0;
-                    dst[2 * t + 1] = (int16_t)v1;
                 }
             }
         }
     }
+    /* 向量 bmax 水平归约（abs 处理负值后取最大） */
+    __m128i m = _mm_max_epi16(_mm256_castsi256_si128(vmax),
+                              _mm256_extracti128_si256(vmax, 1));
+    m = _mm_max_epi16(m, _mm_srli_si128(m, 8));
+    m = _mm_max_epi16(m, _mm_srli_si128(m, 4));
+    m = _mm_max_epi16(m, _mm_srli_si128(m, 2));
+    const int hv = (int16_t)_mm_extract_epi16(m, 0);
+    if (hv > *bmax)
+        *bmax = hv;
 }
 
 /* VNNI 点积累加：一条 vpdpwssd 完成 vpmaddwd+vpaddd 两条指令的工作
@@ -392,28 +458,158 @@ static inline __m256i dot_acc(__m256i acc, __m256i a, __m256i b)
 #endif
 }
 
+/* A 预打包为 int32 k-对：Apair[i*NPAIR+p] = {a_{2p}, a_{2p+1}} 两个 int16
+ * 打包进一个 int32。微核广播由此改为内存形式 vpbroadcastd [mem]
+ * （3/周期、只占 load 口），消除原先"2 次标量加载+合并+寄存器广播
+ * （1/周期、独占 port 5）"的瓶颈——这是 VNNI 收益得以释放的前提。
+ * 行宽 NPAIR 对：K=2047 奇数，末对高位 = k=K 的补零；尾部零行 = 全零。 */
+static void pack_a_pairs(const int16_t *restrict arow, int32_t *restrict aprow)
+{
+    for (int p = 0; p < NPAIR; p++)
+        aprow[p] = (int)(uint16_t)arow[2 * p] | ((int)(uint16_t)arow[2 * p + 1] << 16);
+}
+
 #define DEF_MICRO16(SUFFIX, PAIRS)                                                   \
-    static void micro16_##SUFFIX(const int16_t *restrict a,                          \
+    static void micro16_##SUFFIX(const int32_t *restrict a,                          \
                                  const int16_t *restrict bp, int *restrict d, int p0) \
+    {                                                                                \
+        __m256i acc[MR][2];                                                        \
+        for (int i = 0; i < MR; i++) {                                              \
+            acc[i][0] = _mm256_loadu_si256((const __m256i *)(d + (size_t)i * NPAD)); \
+            acc[i][1] = _mm256_loadu_si256((                                        \
+                const __m256i *)(d + (size_t)i * NPAD + 8));                       \
+        }                                                                           \
+        for (int pp = 0; pp < (PAIRS); pp++) {                                      \
+            const __m256i w0 = _mm256_loadu_si256((                                 \
+                const __m256i *)(bp + (size_t)(p0 + pp) * 32));                     \
+            const __m256i w1 = _mm256_loadu_si256((                                 \
+                const __m256i *)(bp + (size_t)(p0 + pp) * 32 + 16));                \
+            if (PREF_PANEL) { /* 提前 256/320B 拉 B 面板行（BLIS prefetch-iters 风格） */\
+                __builtin_prefetch(bp + (size_t)(p0 + pp + 4) * 32);                \
+                __builtin_prefetch(bp + (size_t)(p0 + pp + 4) * 32 + 64);           \
+            }                                                                       \
+            for (int i = 0; i < MR; i++) {                                          \
+                const __m256i x = _mm256_set1_epi32(                                  \
+                    a[(size_t)i * NPAIR + (p0 + pp)]);                               \
+                acc[i][0] = dot_acc(acc[i][0], x, w0);                               \
+                acc[i][1] = dot_acc(acc[i][1], x, w1);                               \
+            }                                                                       \
+        }                                                                           \
+        for (int i = 0; i < MR; i++) {                                              \
+            _mm256_storeu_si256((__m256i *)(d + (size_t)i * NPAD), acc[i][0]);       \
+            _mm256_storeu_si256((__m256i *)(d + (size_t)i * NPAD + 8), acc[i][1]);   \
+        }                                                                           \
+    }
+
+#if !(ASM16 && KS == 2048)
+DEF_MICRO16(full, KS / 2)
+#endif
+
+#if ASM16 && KS == 2048
+/* 顶层 asm 微核（GCC 内联 asm 模板会把 {vex} 方言语法吃掉，顶层 asm 不处理
+ * 模板、原样直达 gas）。ABI: rdi=a, rsi=bp, rdx=d, ecx=p0；固定寄存器：
+ * ymm0-11=12 累加器, ymm12/13=w 面板行, ymm14=广播 x。{vex} 强制 VEX 编码
+ * ——本机是 AVX-VNNI（VEX），gas 默认选 EVEX（AVX512-VNNI）会 SIGILL。 */
+__asm__(
+".text\n"
+".globl micro16_full_asm\n"
+"micro16_full_asm:\n"
+"  vmovdqu (%rdx), %ymm0\n"
+"  vmovdqu 32(%rdx), %ymm1\n"
+"  vmovdqu 4096(%rdx), %ymm2\n"
+"  vmovdqu 4128(%rdx), %ymm3\n"
+"  vmovdqu 8192(%rdx), %ymm4\n"
+"  vmovdqu 8224(%rdx), %ymm5\n"
+"  vmovdqu 12288(%rdx), %ymm6\n"
+"  vmovdqu 12320(%rdx), %ymm7\n"
+"  vmovdqu 16384(%rdx), %ymm8\n"
+"  vmovdqu 16416(%rdx), %ymm9\n"
+"  vmovdqu 20480(%rdx), %ymm10\n"
+"  vmovdqu 20512(%rdx), %ymm11\n"
+"  movslq %ecx, %rcx\n"
+"  leaq (%rdi,%rcx,4), %r9\n"      /* A 基址（含 p0 偏移） */
+"  xorl %r8d, %r8d\n"              /* pp 计数（a 索引 ×4） */
+"  xorl %r10d, %r10d\n"            /* bp 字节偏移（×64） */
+"1:\n"
+"  vmovdqu (%rsi,%r10), %ymm12\n"
+"  vmovdqu 32(%rsi,%r10), %ymm13\n"
+"  vpbroadcastd (%r9,%r8,4), %ymm14\n"
+"  {vex} vpdpwssd %ymm14, %ymm12, %ymm0\n"
+"  {vex} vpdpwssd %ymm14, %ymm13, %ymm1\n"
+"  vpbroadcastd 4096(%r9,%r8,4), %ymm14\n"
+"  {vex} vpdpwssd %ymm14, %ymm12, %ymm2\n"
+"  {vex} vpdpwssd %ymm14, %ymm13, %ymm3\n"
+"  vpbroadcastd 8192(%r9,%r8,4), %ymm14\n"
+"  {vex} vpdpwssd %ymm14, %ymm12, %ymm4\n"
+"  {vex} vpdpwssd %ymm14, %ymm13, %ymm5\n"
+"  vpbroadcastd 12288(%r9,%r8,4), %ymm14\n"
+"  {vex} vpdpwssd %ymm14, %ymm12, %ymm6\n"
+"  {vex} vpdpwssd %ymm14, %ymm13, %ymm7\n"
+"  vpbroadcastd 16384(%r9,%r8,4), %ymm14\n"
+"  {vex} vpdpwssd %ymm14, %ymm12, %ymm8\n"
+"  {vex} vpdpwssd %ymm14, %ymm13, %ymm9\n"
+"  vpbroadcastd 20480(%r9,%r8,4), %ymm14\n"
+"  {vex} vpdpwssd %ymm14, %ymm12, %ymm10\n"
+"  {vex} vpdpwssd %ymm14, %ymm13, %ymm11\n"
+"  addq $64, %r10\n"
+"  incq %r8\n"
+"  cmpq $1024, %r8\n"
+"  jne 1b\n"
+"  vmovdqu %ymm0, (%rdx)\n"
+"  vmovdqu %ymm1, 32(%rdx)\n"
+"  vmovdqu %ymm2, 4096(%rdx)\n"
+"  vmovdqu %ymm3, 4128(%rdx)\n"
+"  vmovdqu %ymm4, 8192(%rdx)\n"
+"  vmovdqu %ymm5, 8224(%rdx)\n"
+"  vmovdqu %ymm6, 12288(%rdx)\n"
+"  vmovdqu %ymm7, 12320(%rdx)\n"
+"  vmovdqu %ymm8, 16384(%rdx)\n"
+"  vmovdqu %ymm9, 16416(%rdx)\n"
+"  vmovdqu %ymm10, 20480(%rdx)\n"
+"  vmovdqu %ymm11, 20512(%rdx)\n"
+"  vzeroupper\n"
+"  ret\n"
+);
+void micro16_full_asm(const int32_t *a, const int16_t *bp, int *d, int p0);
+#define micro16_full(a, bp, d, p0) micro16_full_asm(a, bp, d, p0)
+#endif
+#if K % KS != 0
+DEF_MICRO16(tail, (K % KS + 1) / 2)
+#endif
+
+#ifndef MU2 /* 内层 pp×2 手工展开（4 个 w 预载 + 12 条 dot 连发，需 PAIRS 为偶） */
+#define MU2 0
+#endif
+#if MU2
+#define DEF_MICRO16_U2(SUFFIX, PAIRS)                                                \
+    static void micro16u_##SUFFIX(const int32_t *restrict a,                         \
+                                  const int16_t *restrict bp, int *restrict d,       \
+                                  int p0)                                            \
     {                                                                                \
         __m256i acc[MR][2];                                                          \
         for (int i = 0; i < MR; i++) {                                               \
             acc[i][0] = _mm256_loadu_si256((const __m256i *)(d + (size_t)i * NPAD)); \
-            acc[i][1] = _mm256_loadu_si256(                                          \
-                (const __m256i *)(d + (size_t)i * NPAD + 8));                        \
+            acc[i][1] = _mm256_loadu_si256((                                         \
+                const __m256i *)(d + (size_t)i * NPAD + 8));                         \
         }                                                                            \
-        for (int pp = 0; pp < (PAIRS); pp++) {                                       \
-            const __m256i w0 = _mm256_loadu_si256(                                   \
-                (const __m256i *)(bp + (size_t)(p0 + pp) * 32));                     \
-            const __m256i w1 = _mm256_loadu_si256(                                   \
-                (const __m256i *)(bp + (size_t)(p0 + pp) * 32 + 16));                \
+        for (int pp = 0; pp < (PAIRS); pp += 2) {                                    \
+            const __m256i w0a = _mm256_loadu_si256((                                 \
+                const __m256i *)(bp + (size_t)(p0 + pp) * 32));                      \
+            const __m256i w1a = _mm256_loadu_si256((                                 \
+                const __m256i *)(bp + (size_t)(p0 + pp) * 32 + 16));                 \
+            const __m256i w0b = _mm256_loadu_si256((                                 \
+                const __m256i *)(bp + (size_t)(p0 + pp + 1) * 32));                  \
+            const __m256i w1b = _mm256_loadu_si256((                                 \
+                const __m256i *)(bp + (size_t)(p0 + pp + 1) * 32 + 16));             \
             for (int i = 0; i < MR; i++) {                                           \
-                const int16_t a0 = a[(size_t)i * (K + 1) + 2 * (p0 + pp)];           \
-                const int16_t a1 = a[(size_t)i * (K + 1) + 2 * (p0 + pp) + 1];       \
-                const __m256i x = _mm256_set1_epi32(                                  \
-                    (int)(uint16_t)a0 | ((int)(uint16_t)a1 << 16));                  \
-                acc[i][0] = dot_acc(acc[i][0], x, w0);                               \
-                acc[i][1] = dot_acc(acc[i][1], x, w1);                               \
+                const __m256i xa = _mm256_set1_epi32(                                \
+                    a[(size_t)i * NPAIR + (p0 + pp)]);                               \
+                const __m256i xb = _mm256_set1_epi32(                                \
+                    a[(size_t)i * NPAIR + (p0 + pp + 1)]);                           \
+                acc[i][0] = dot_acc(acc[i][0], xa, w0a);                             \
+                acc[i][1] = dot_acc(acc[i][1], xa, w1a);                             \
+                acc[i][0] = dot_acc(acc[i][0], xb, w0b);                             \
+                acc[i][1] = dot_acc(acc[i][1], xb, w1b);                             \
             }                                                                        \
         }                                                                            \
         for (int i = 0; i < MR; i++) {                                               \
@@ -422,9 +618,7 @@ static inline __m256i dot_acc(__m256i acc, __m256i a, __m256i b)
         }                                                                            \
     }
 
-DEF_MICRO16(full, KS / 2)
-#if K % KS != 0
-DEF_MICRO16(tail, (K % KS + 1) / 2)
+DEF_MICRO16_U2(full, KS / 2)
 #endif
 
 /* 解析条带（ks 起 srows 行）的本进程切片进 Bs（int16，就地），并发起非阻塞拼整 */
@@ -458,13 +652,14 @@ int main(int argc, char **argv)
 
     int rows_pad = ((my_rows + MR - 1) / MR) * MR; /* 行数补到 MR 的倍数 */
 
-    int *Bp = xmalloc((size_t)NPAD * K * sizeof *Bp); /* int32 打包面板（回退用） */
-    int16_t *Bp16 = xmalloc((size_t)NPAD * NPAIR * 2 * sizeof *Bp16); /* k 交错面板 */
-    int16_t *Al = xcalloc((size_t)rows_pad * (K + 1), sizeof *Al); /* 行宽 K+1：末列补零凑 k 对，尾部零行=padding */
+    int *Bp = xmalloc((size_t)NPAD * K * sizeof *Bp); /* int32 打包面板（回退用，常态不触页） */
+    int16_t *Bp16 = xalloc_huge((size_t)NPAD * NPAIR * 2 * sizeof *Bp16); /* k 交错面板 */
+    int16_t *Al = xalloc_huge((size_t)rows_pad * (K + 1) * sizeof *Al); /* 行宽 K+1：末列补零凑 k 对，尾部零行=padding */
+    int32_t *Apair = xalloc_huge((size_t)rows_pad * NPAIR * sizeof *Apair); /* A 的 int32 k-对打包（int16 通路用） */
     int amax = 0;
-    int *Cl = xmalloc((size_t)my_rows * NPAD * sizeof *Cl);
-    int *Dl = xcalloc((size_t)rows_pad * NPAD, sizeof *Dl);
-    int16_t *Bs2 = xmalloc((size_t)2 * KS * N * sizeof *Bs2); /* 双条带缓冲(int16) */
+    int *Cl = xalloc_huge((size_t)my_rows * NPAD * sizeof *Cl);
+    int *Dl = xalloc_huge((size_t)rows_pad * NPAD * sizeof *Dl);
+    int16_t *Bs2 = xalloc_huge((size_t)2 * KS * N * sizeof *Bs2); /* 双条带缓冲(int16) */
     int *scnt = xmalloc((size_t)nproc * sizeof *scnt);
     int *sdsp = xmalloc((size_t)nproc * sizeof *sdsp);
 
@@ -511,6 +706,9 @@ int main(int argc, char **argv)
     for (int i = 0; i < my_rows; i++) /* Al 行宽=K+1（末列补零凑 k 对），逐行解析 */
         parse_fast_i16(buf + line_off[LINE_A0 + my_first + i], buf + fsize,
                        Al + (size_t)i * (K + 1), K, &amax);
+    /* 趁 Al 行还在 L1，就地合并成 int32 k-对（padding 行全零，直接打包） */
+    for (int i = 0; i < rows_pad; i++)
+        pack_a_pairs(Al + (size_t)i * (K + 1), Apair + (size_t)i * NPAIR);
     for (int i = 0; i < my_rows; i++) /* Cl 行宽=NPAD，逐行解析 */
         parse_fast_i32(buf + line_off[LINE_C0 + my_first + i], buf + fsize,
                        Cl + (size_t)i * NPAD, N, NULL);
@@ -559,22 +757,38 @@ int main(int argc, char **argv)
 
         double c2 = MPI_Wtime();
         const int pairs = (ke - ks + 1) / 2;
+#if SB > 0
+        /* 超级块外层：组内 A 面板驻留 L2，跨全部 jt 复用（jt×i0 直排时 A
+         * 每列块扫一遍 4.2MB L3，共 64 遍）；B 面板切片 64KB 常驻 L1 */
+        for (int g0 = 0; g0 < rows_pad; g0 += SB * MR)
+#endif
         for (int jt = 0; jt < NPAD; jt += NR)
-            for (int i0 = 0; i0 < rows_pad; i0 += MR) {
+            for (int i0 =
+#if SB > 0
+                     g0;
+                 i0 < g0 + SB * MR && i0 < rows_pad;
+#else
+                     0;
+                 i0 < rows_pad;
+#endif
+                 i0 += MR) {
                 int *d = Dl + (size_t)i0 * NPAD + jt;
-                const int16_t *arow = Al + (size_t)i0 * (K + 1);
+                const int32_t *aprow = Apair + (size_t)i0 * NPAIR;
                 if (v16ok) {
                     const int16_t *bp =
                         Bp16 + (size_t)(jt / NR) * NPAIR * 2 * 16;
-#if K % KS != 0
+#if MU2
+                    micro16u_full(aprow, bp, d, ks / 2);
+#elif K % KS != 0
                     if (pairs == KS / 2)
-                        micro16_full(arow, bp, d, ks / 2);
+                        micro16_full(aprow, bp, d, ks / 2);
                     else
-                        micro16_tail(arow, bp, d, ks / 2);
+                        micro16_tail(aprow, bp, d, ks / 2);
 #else
-                    micro16_full(arow, bp, d, ks / 2);
+                    micro16_full(aprow, bp, d, ks / 2);
 #endif
                 } else {
+                    const int16_t *arow = Al + (size_t)i0 * (K + 1);
 #if K % KS != 0
                     if (ke - ks == KS)
                         micro_full(arow, Bp + (size_t)jt * K, d, ks);
@@ -593,7 +807,11 @@ int main(int argc, char **argv)
     /* ---- 3. 各进程格式化自己的 D 行块（进程 0 的块含 "#D\n" 头） ---- */
     init_digit_pairs();
     double w0 = MPI_Wtime();
-    char *obuf = xmalloc((size_t)my_rows * N * 12 + 16 + (rank == 0 ? 3 : 0));
+    char *obuf = xalloc_huge((size_t)my_rows * N * 12 + 16 + (rank == 0 ? 3 : 0));
+    /* 实测教训（三轮负结果，均弃）：16B 槽两遍压缩 +4%（槽的 33MB 额外
+     * 流量）；slen 轻量两遍 +2~6%（第二遍重读重算）；SIMD itoa 文献结论
+     * ≤8 位值无优势。单遍 + 无分支 put_int 即本机甜点，~45 周期/值为
+     * 算术+访存吞吐硬成本。 */
     size_t op = 0;
     if (rank == 0) {
         memcpy(obuf, "#D\n", 3);
@@ -645,20 +863,16 @@ int main(int argc, char **argv)
     fflush(stdout);
 
     munmap((void *)buf, fsize);
+    /* 大缓冲区（xalloc_huge）为独享 mmap，进程退出即归还，不做 munmap/free；
+     * Bp 常态下未被写页（回退通路才用），free 走 glibc 惰性路径即可 */
     free(nl_loc);
     free(nl_all);
     free(line_off);
     free(ncnt);
     free(ndsp);
-    free(obuf);
     free(blk_cnt);
     free(blk_dsp);
     free(Bp);
-    free(Bp16);
-    free(Al);
-    free(Cl);
-    free(Dl);
-    free(Bs2);
     free(scnt);
     free(sdsp);
 
