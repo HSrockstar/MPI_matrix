@@ -1,48 +1,35 @@
-CC      = mpicc
-CCBIN   = gcc-12
-CFLAGS  = -O3 -Wall -Wextra -march=native -mavxvnni
-DATA    = 作业基于MPI的基本矩阵运算的附件
-
-# 最终提交：直接 make 即可（无 PGO）。gcc-12：gcc-10 不识别 -mavxvnni，
-# 无 VNNI 的机器自动回退 vpmaddwd+vpaddd）
-all: mpi_matmul
-
-mpi_matmul: mpi_matmul.c
-	OMPI_CC=$(CCBIN) $(CC) $(CFLAGS) -o $@ $<
-
-# PGO（可选，实测中性偏负，不推荐）：v8 修复了旧 Makefile "一步编译链接导致
-# gcda 名字错位、PGO 静默失效"的坑后，真正的 PGO 首次跑通——交错实测
-# np=1 −2% / np=2 0% / np=4 +5.6%，弃用（旧日志的 +3~5% 系无效 PGO 的误判）。
-# 若要实验：注意必须两步编译（-c 出固定名 .o），gcda 与 .o 同名同目录。
-pgo: mpi_matmul.c
-	OMPI_CC=$(CCBIN) $(CC) $(CFLAGS) -fprofile-generate -c -o mpi_matmul.o mpi_matmul.c
-	OMPI_CC=$(CCBIN) $(CC) -fprofile-generate -no-pie mpi_matmul.o -o mpi_matmul_pgo_train
-	mpirun --bind-to core -np 1 ./mpi_matmul_pgo_train "$(DATA)/RandMatrix.txt" /tmp/r_pgo_train.txt
-	mpirun --bind-to core -np 2 ./mpi_matmul_pgo_train "$(DATA)/RandMatrix.txt" /tmp/r_pgo_train.txt
-	mpirun --bind-to core -np 4 ./mpi_matmul_pgo_train "$(DATA)/RandMatrix.txt" /tmp/r_pgo_train.txt
-	OMPI_CC=$(CCBIN) $(CC) $(CFLAGS) -fprofile-use -fprofile-correction -c -o mpi_matmul.o mpi_matmul.c
-	OMPI_CC=$(CCBIN) $(CC) -no-pie mpi_matmul.o -o mpi_matmul
-	rm -f mpi_matmul_pgo_train mpi_matmul.gcda
-
-# 单进程（串行基线，用于加速比 T1）
-run1: mpi_matmul
-	mpirun --bind-to core -np 1 ./mpi_matmul "$(DATA)/RandMatrix.txt" result.txt
-
-run2: mpi_matmul
-	mpirun --bind-to core -np 2 ./mpi_matmul "$(DATA)/RandMatrix.txt" result.txt
-
-run4: mpi_matmul
-	mpirun --bind-to core -np 4 ./mpi_matmul "$(DATA)/RandMatrix.txt" result.txt
-
-# 用老师提供的 verify_ 验证 result.txt
+MPICC ?= mpicc
+MPICXX ?= mpicxx
+CFLAGS ?= -O3 -std=c11 -Wall -Wextra -Wshadow -Wconversion -Wno-sign-conversion
+CXXFLAGS ?= -O3 -std=c++11 -Wall -Wextra
+BUILD ?= build
+TARGET ?= mpi_matmul
+LDFLAGS ?=
+SOURCES = mpi_matmul.c lab/common.c lab/input.c lab/output.c lab/kernels.c lab/distributed.c lab/selftest.c lab/blas.c lab/external.c lab/strassen.c
+OBJECTS = $(patsubst %.c,$(BUILD)/%.o,$(SOURCES)) $(BUILD)/lab/format_jeaiii.o
+DATA = 作业基于MPI的基本矩阵运算的附件
+.PHONY: all clean check test sanitize run1 run2 run4 verify
+all: $(TARGET)
+$(TARGET): $(OBJECTS)
+	$(MPICXX) $(LDFLAGS) -o $@ $(OBJECTS) -ldl
+$(BUILD)/%.o: %.c lab/lab.h
+	@mkdir -p $(dir $@)
+	$(MPICC) $(CFLAGS) -c $< -o $@
+$(BUILD)/lab/output.o: lab/quad_table.h
+$(BUILD)/lab/external.o: backends/backend.h
+$(BUILD)/lab/format_jeaiii.o: lab/format_jeaiii.cpp lab/vendor/jeaiii/jeaiii_to_text.h
+	@mkdir -p $(dir $@)
+	$(MPICXX) $(CXXFLAGS) -c $< -o $@
+check: mpi_matmul
+	./mpi_matmul --selftest
+test: mpi_matmul
+	python3 tests/integration.py
+sanitize:
+	$(MAKE) BUILD=build-sanitize TARGET=mpi_matmul_sanitize CFLAGS='-fno-pie -O1 -g -std=c11 -Wall -Wextra -fsanitize=address,undefined -fno-omit-frame-pointer' CXXFLAGS='-fno-pie -O1 -g -std=c++11 -fsanitize=address,undefined -fno-omit-frame-pointer' LDFLAGS='-no-pie -fsanitize=address,undefined'
+run1 run2 run4: mpi_matmul
+	mpirun -np $(subst run,,$@) ./mpi_matmul '$(DATA)/RandMatrix.txt' result.txt
 verify:
-	"$(DATA)/verify_" "$(DATA)/RandMatrix.txt" result.txt
-
-# 交错 A/B 跑分（共享服务器必须同窗口交错 + ≥10 轮取中位数）
-bench_ab: bench_ab.sh
-	@echo '用法: ./bench_ab.sh <binA> <binB> [np列表] [轮数]'
-
+	'$(DATA)/verify_' '$(DATA)/RandMatrix.txt' result.txt
 clean:
-	rm -f mpi_matmul result.txt
-
-.PHONY: all run1 run2 run4 verify pgo bench_ab clean
+	rm -rf $(BUILD)
+	rm -f $(TARGET)

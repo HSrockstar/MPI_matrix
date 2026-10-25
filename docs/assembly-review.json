@@ -1,0 +1,84 @@
+{
+  "binary_sha256": "6b17462a246c56ef76e97ae656fa4a2ea5dd8b535c3b502790765e87b69d0421",
+  "functions": {
+    "sign4_2": {
+      "vpdpbusd": 0,
+      "vex_vpdpbusd": 0,
+      "evex_vpdpbusd": 0,
+      "stack_reference_lines": 263
+    },
+    "sign6_2": {
+      "vpdpbusd": 0,
+      "vex_vpdpbusd": 0,
+      "evex_vpdpbusd": 0,
+      "stack_reference_lines": 509
+    },
+    "sign8_1": {
+      "vpdpbusd": 0,
+      "vex_vpdpbusd": 0,
+      "evex_vpdpbusd": 0,
+      "stack_reference_lines": 188
+    },
+    "sign4_3": {
+      "vpdpbusd": 0,
+      "vex_vpdpbusd": 0,
+      "evex_vpdpbusd": 0,
+      "stack_reference_lines": 467
+    },
+    "nibble4_2": {
+      "vpdpbusd": 0,
+      "vex_vpdpbusd": 0,
+      "evex_vpdpbusd": 0,
+      "stack_reference_lines": 432
+    },
+    "nibble6_2": {
+      "vpdpbusd": 0,
+      "vex_vpdpbusd": 0,
+      "evex_vpdpbusd": 0,
+      "stack_reference_lines": 493
+    },
+    "nibble8_1": {
+      "vpdpbusd": 0,
+      "vex_vpdpbusd": 0,
+      "evex_vpdpbusd": 0,
+      "stack_reference_lines": 332
+    },
+    "nibble4_3": {
+      "vpdpbusd": 0,
+      "vex_vpdpbusd": 0,
+      "evex_vpdpbusd": 0,
+      "stack_reference_lines": 711
+    },
+    "vnni4_2": {
+      "vpdpbusd": 128,
+      "vex_vpdpbusd": 128,
+      "evex_vpdpbusd": 0,
+      "stack_reference_lines": 43
+    },
+    "vnni6_2": {
+      "vpdpbusd": 192,
+      "vex_vpdpbusd": 192,
+      "evex_vpdpbusd": 0,
+      "stack_reference_lines": 240
+    },
+    "vnni8_1": {
+      "vpdpbusd": 128,
+      "vex_vpdpbusd": 128,
+      "evex_vpdpbusd": 0,
+      "stack_reference_lines": 65
+    },
+    "vnni4_3": {
+      "vpdpbusd": 192,
+      "vex_vpdpbusd": 192,
+      "evex_vpdpbusd": 0,
+      "stack_reference_lines": 137
+    },
+    "pair_micro": {
+      "vpdpbusd": 0,
+      "vex_vpdpbusd": 0,
+      "evex_vpdpbusd": 0,
+      "stack_reference_lines": 6
+    }
+  },
+  "note": "Stack references are diagnostics, not a proof of register spilling or speed."
+}

@@ -1,0 +1,26 @@
+{
+  "date": "2026-10-25",
+  "source_set_sha256": "a672127c393ecaf1c0c8ee8ef493a72861bd4928b4e2bf177020a85395389372",
+  "selftest_per_rank": 1386,
+  "release_integration": 221,
+  "asan_ubsan_integration": 221,
+  "asan_ubsan_boundary": 156,
+  "posix_io_faults": 3,
+  "python_unittest_groups": 6,
+  "external_reference_contracts": 36,
+  "full_dimensions_checks": 9,
+  "full_dimensions_input_sha256": "78d9dccc58c8bc5385ea2aef23ae2e47eaaf1ec835d7b0b98d34c49c5bdadcce",
+  "pgo_generate_train_use_verified": true,
+  "pgo_train_np": [
+    1,
+    2,
+    4
+  ],
+  "benchmark_smoke_cases": 4,
+  "benchmark_smoke_trials_per_case": 3,
+  "benchmark_smoke_warmups_per_case": 1,
+  "three_external_libraries_verified": false,
+  "teacher_verifier_executed": false,
+  "original_13900k_benchmarked": false,
+  "leak_sanitizer_completed": false
+}

@@ -1,0 +1,3 @@
+# Optional Python research models / tests; the C executable does not need these.
+numpy>=2.0,<3
+mpi4py>=4.0,<5

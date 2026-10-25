@@ -1,0 +1,6 @@
+[
+  {"name":"baseline","args":[]},
+  {"name":"int8-parser","args":["--kernel","vnni","--parser","wide"]},
+  {"name":"packed-b","args":["--kernel","vnni","--parser","wide","--bmode","packed"]},
+  {"name":"stream-fused","args":["--kernel","vnni","--parser","wide","--stream","1","--fused","1","--bmode","root-packed","--arena","1","--format","jeaiii"]}
+]

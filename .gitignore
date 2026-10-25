@@ -1,0 +1,11 @@
+build/
+build-*/
+artifacts/
+__pycache__/
+*.pyc
+*.so
+*.gcda
+*.gcno
+mpi_matmul
+mpi_matmul_sanitize
+result.txt
