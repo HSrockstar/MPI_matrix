@@ -1,0 +1,59 @@
+model	size	wall_s	status
+naive	31x67x29	0.029	OK
+naive	127x255x127	0.228	OK
+strassen	31x67x29	0.024	OK
+strassen	127x255x127	0.216	OK
+strassen-winograd	31x67x29	0.025	OK
+strassen-winograd	127x255x127	0.217	OK
+alternative-basis	31x67x29	0.114	OK
+alternative-basis	127x255x127	4.762	OK
+tensor	31x67x29	0.118	OK
+tensor	127x255x127	4.690	OK
+bitserial	31x67x29	0.026	OK
+bitserial	127x255x127	0.164	OK
+four-russians	31x67x29	0.029	OK
+four-russians	127x255x127	0.541	OK
+crt	31x67x29	0.031	OK
+crt	127x255x127	0.716	OK
+structured	31x67x29	0.026	OK
+structured	127x255x127	0.389	OK
+kronecker	31x67x29	0.025	OK
+kronecker	127x255x127	0.201	OK
+ntt	31x67x29	0.254	OK
+ntt	127x255x127	8.864	OK
+finite-field-fp64	31x67x29	0.057	OK
+finite-field-fp64	127x255x127	0.084	OK
+morton	31x67x29	0.035	OK
+morton	127x255x127	0.602	OK
+scheme-strassen_2x2x3	31x67x29	0.116	OK
+mpi-cannon	31x67x29(np4)	0.394	FAIL:--------------------------------------------------------------------------
+mpi-cannon	127x255x127(np4)	2.377	FAIL:--------------------------------------------------------------------------
+mpi-fox	31x67x29(np4)	0.384	FAIL:--------------------------------------------------------------------------
+mpi-fox	127x255x127(np4)	0.378	FAIL:--------------------------------------------------------------------------
+mpi-hsumma	31x67x29(np4)	0.374	FAIL:--------------------------------------------------------------------------
+mpi-hsumma	127x255x127(np4)	1.384	FAIL:--------------------------------------------------------------------------
+mpi-layered-summa/L2	31x67x29(np4)	2.372	FAIL:--------------------------------------------------------------------------
+mpi-layered-summa/L2	127x255x127(np4)	1.397	FAIL:--------------------------------------------------------------------------
+mpi-recursive	31x67x29(np4)	1.376	FAIL:--------------------------------------------------------------------------
+mpi-recursive	127x255x127(np4)	2.380	FAIL:--------------------------------------------------------------------------
+mpi-grid-search	31x67x29(np4)	0.377	FAIL:--------------------------------------------------------------------------
+mpi-grid-search	127x255x127(np4)	2.404	FAIL:--------------------------------------------------------------------------
+fused-parse	31x67x29(np4)	0.388	OK
+mpi-cannon	31x67x29(np4)	0.374	OK total_s=0.0034
+mpi-cannon	127x255x127(np4)	0.387	OK total_s=0.0136
+mpi-cannon	1023x2047x1023(np4)	2.178	OK total_s=1.7833
+mpi-fox	31x67x29(np4)	0.376	OK total_s=0.0039
+mpi-fox	127x255x127(np4)	0.377	OK total_s=0.0120
+mpi-fox	1023x2047x1023(np4)	2.221	OK total_s=1.8202
+mpi-hsumma	31x67x29(np4)	0.382	OK total_s=0.0030
+mpi-hsumma	127x255x127(np4)	0.386	OK total_s=0.0150
+mpi-hsumma	1023x2047x1023(np4)	1.276	OK total_s=0.8823
+mpi-layered-summa/L2	31x67x29(np4)	0.381	OK total_s=0.0016
+mpi-layered-summa/L2	127x255x127(np4)	0.393	OK total_s=0.0263
+mpi-layered-summa/L2	1023x2047x1023(np4)	1.242	OK total_s=0.8433
+mpi-recursive	31x67x29(np4)	0.386	OK total_s=0.0037
+mpi-recursive	127x255x127(np4)	0.398	OK total_s=0.0196
+mpi-recursive	1023x2047x1023(np4)	1.347	OK total_s=0.9448
+mpi-grid-search	31x67x29(np4)	0.387	OK total_s=0.0037
+mpi-grid-search	127x255x127(np4)	0.401	OK total_s=0.0180
+mpi-grid-search	1023x2047x1023(np4)	1.242	OK total_s=0.8377

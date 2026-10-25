@@ -1,0 +1,91 @@
+default	1		OK	0.191224	0.091586	0.028977	0.070126	vnni/rows
+default	2		OK	0.100714	0.049546	0.015942	0.035826	vnni/rows
+default	4		OK	0.061739	0.035327	0.010788	0.017708	vnni/rows
+kernel-scalar	1	--kernel scalar	OK	0.666057	0.567455	0.028975	0.069604	scalar/rows
+kernel-scalar	4	--kernel scalar	OK	0.188523	0.161547	0.009468	0.017839	scalar/rows
+kernel-vnni	1	--kernel vnni	OK	0.192239	0.093040	0.028628	0.070131	vnni/rows
+kernel-vnni	4	--kernel vnni	OK	0.061631	0.035110	0.010875	0.017738	vnni/rows
+kernel-avx2-sign	1	--kernel avx2-sign	OK	0.201482	0.102404	0.029140	0.070162	avx2-sign/rows
+kernel-avx2-sign	4	--kernel avx2-sign	OK	0.064294	0.037586	0.009869	0.017786	avx2-sign/rows
+kernel-nibble	1	--kernel nibble	OK	0.219873	0.119559	0.028754	0.069680	nibble/rows
+kernel-nibble	4	--kernel nibble	OK	0.070392	0.041542	0.010740	0.017687	nibble/rows
+kernel-fp32	1	--kernel fp32	OK	1.070702	0.971621	0.028863	0.069705	fp32/rows
+kernel-fp32	4	--kernel fp32	OK	0.279229	0.250629	0.015736	0.018018	fp32/rows
+kernel-fp64	1	--kernel fp64	OK	1.471514	1.372368	0.029207	0.069701	fp64/rows
+kernel-fp64	4	--kernel fp64	OK	0.603441	0.576289	0.120064	0.017786	fp64/rows
+kernel-winograd	1	--kernel winograd	OK	1.534635	1.430775	0.029399	0.070233	winograd/rows
+kernel-winograd	4	--kernel winograd	OK	0.622732	0.595490	0.211414	0.017804	winograd/rows
+kernel-strassen	1	--kernel strassen	OK	0.232130	0.133248	0.029128	0.070203	strassen/rows
+kernel-strassen	4	--kernel strassen	OK	0.069699	0.043161	0.008919	0.017737	strassen/rows
+kernel-strassen-winograd	1	--kernel strassen-winograd	OK	0.235348	0.135867	0.029330	0.070224	strassen-winograd/rows
+kernel-strassen-winograd	4	--kernel strassen-winograd	OK	0.070027	0.043185	0.009752	0.017751	strassen-winograd/rows
+kernel-recursive	1	--kernel recursive	OK	0.754946	0.656663	0.028954	0.069554	recursive/rows
+kernel-recursive	4	--kernel recursive	OK	0.194019	0.166999	0.016259	0.017792	recursive/rows
+kernel-blas	1	--kernel blas	OK	0.348992	0.249433	0.029459	0.069503	blas/rows
+kernel-blas	4	--kernel blas	OK	0.098859	0.072122	0.009095	0.017770	blas/rows
+kernel-blas-fp32	1	--kernel blas-fp32	OK	0.263067	0.164021	0.029184	0.069819	blas-fp32/rows
+kernel-blas-fp32	4	--kernel blas-fp32	OK	0.074273	0.047408	0.009098	0.017806	blas-fp32/rows
+kernel-external(ref)	4	--kernel external	OK	0.217559	0.190485	0.010447	0.017797	external/rows
+dist-ring	2	--dist ring	OK	0.103102	0.052560	0.015724	0.035104	vnni/ring
+dist-ring	4	--dist ring	OK	0.055189	0.028409	0.009551	0.017748	vnni/ring
+dist-split-k	2	--dist split-k	OK	0.120631	0.068262	0.016518	0.035304	vnni/split-k
+dist-split-k	4	--dist split-k	OK	0.077849	0.050984	0.009209	0.017774	vnni/split-k
+dist-summa	2	--dist summa	OK	0.126071	0.075206	0.015822	0.035308	vnni/summa
+dist-summa	4	--dist summa	OK	0.083210	0.056144	0.009140	0.017808	vnni/summa
+dist-columns	2	--dist columns	OK	0.131500	0.080405	0.015703	0.035407	vnni/columns
+dist-columns	4	--dist columns	OK	0.100649	0.073602	0.009139	0.017860	vnni/columns
+bmode-equal	4	--bmode equal	OK	0.061696	0.034889	0.010226	0.017736	vnni/rows
+bmode-packed	4	--bmode packed	OK	0.051014	0.024192	0.009010	0.017812	vnni/rows
+bmode-root	4	--bmode root	OK	0.084644	0.057396	0.015893	0.017823	vnni/rows
+bmode-replicate	4	--bmode replicate	OK	0.083308	0.056485	0.009340	0.017749	vnni/rows
+balance-1.2-rows	4	--balance 1.2	FAIL	[ps:448982] Set MCA parameter "orte_base_help_aggregate" to 0 to see all help / error messages
+balance-1.2-ring	4	--dist ring --balance 1.2	FAIL	[ps:449038] Set MCA parameter "orte_base_help_aggregate" to 0 to see all help / error messages
+progress-1-us0	4	--bmode packed --progress 1	OK	0.051095	0.024481	0.008969	0.017738	vnni/rows
+progress-1-us50	4	--bmode packed --progress 1 --progress-us 50	OK	0.051553	0.024700	0.009082	0.017745	vnni/rows
+parser-simd	4	--parser simd	OK	0.051241	0.029942	0.009907	0.012077	vnni/rows
+parser-swar	4	--parser swar	OK	0.060420	0.034358	0.009609	0.016572	vnni/rows
+parser-wide	4	--parser wide	OK	0.050346	0.030038	0.010372	0.011615	vnni/rows
+prefault-local	4	--prefault local	OK	0.061991	0.035147	0.010599	0.017730	vnni/rows
+prefault-all	4	--prefault all	OK	0.063953	0.034875	0.011194	0.018368	vnni/rows
+reader-pread	4	--reader pread	OK	0.067868	0.035121	0.010819	0.023450	vnni/rows
+layout-interleaved	4	--layout interleaved	OK	0.063064	0.036169	0.009683	0.017790	vnni/rows
+pad-64	4	--pad 64	OK	0.062166	0.035335	0.010164	0.017790	vnni/rows
+pad-128	4	--pad 128	OK	0.062169	0.035389	0.010529	0.017757	vnni/rows
+aligned-0	4	--aligned 0	OK	0.062508	0.035740	0.010222	0.017721	vnni/rows
+beta0-0	4	--beta0 0	OK	0.061377	0.034644	0.009969	0.017723	vnni/rows
+micro-4x16	4	--mr 4 --nr 16	OK	0.061412	0.034663	0.010737	0.017823	vnni/rows
+micro-8x8	4	--mr 8 --nr 8	OK	0.061815	0.035048	0.011133	0.017764	vnni/rows
+micro-4x24	4	--mr 4 --nr 24	OK	0.062210	0.035411	0.010231	0.017801	vnni/rows
+kb-256	4	--kb 256	OK	0.053709	0.026862	0.009265	0.017882	vnni/rows
+kb-512	4	--kb 512	OK	0.058833	0.031161	0.009624	0.017945	vnni/rows
+unroll-2	4	--unroll 2	OK	0.060632	0.033928	0.010656	0.017802	vnni/rows
+unroll-4	4	--unroll 4	OK	0.061256	0.034773	0.011030	0.017807	vnni/rows
+pipeline-1	4	--pipeline 1	OK	0.061185	0.034284	0.010175	0.017796	vnni/rows
+stream-root	4	--stream 1 --bmode root	OK	0.084023	0.066139	0.000215	0.017824	vnni/rows
+stream-replicate	4	--stream 1 --bmode replicate	OK	0.082517	0.064450	0.000200	0.017920	vnni/rows
+stream-fused-root-packed	4	--stream 1 --fused 1 --bmode root-packed	OK	0.083738	0.065748	0.000209	0.017855	vnni/rows
+stream-fused-full	4	--stream 1 --fused 1 --bmode root-packed --parser wide --format jeaiii --arena 1	OK	0.062136	0.050390	0.000604	0.011602	vnni/rows
+format-quad	4	--format quad	OK	0.059830	0.034581	0.009194	0.017808	vnni/rows
+format-jeaiii	4	--format jeaiii	OK	0.058419	0.034898	0.007839	0.017808	vnni/rows
+format-snprintf	4	--format snprintf	OK	0.067743	0.036376	0.014909	0.017733	vnni/rows
+format-batch	4	--format batch	OK	0.060906	0.035004	0.009010	0.017819	vnni/rows
+format-vector	4	--format vector	OK	0.059592	0.034799	0.008800	0.017804	vnni/rows
+format-quad-static	4	--format quad --static-table 1	OK	0.061158	0.035811	0.008965	0.017782	vnni/rows
+writer-mpi	4	--writer mpi	OK	0.062759	0.036259	0.010889	0.017796	vnni/rows
+writer-mpi-all	4	--writer mpi-all	OK	0.063473	0.034560	0.012968	0.017946	vnni/rows
+offset-allgather	4	--offset allgather	OK	0.062032	0.035454	0.010918	0.017804	vnni/rows
+write-chunk-1M	4	--write-chunk 1048576	FAIL	[ps:451208] Set MCA parameter "orte_base_help_aggregate" to 0 to see all help / error messages
+alloc-huge	4	--alloc huge	OK	0.059026	0.031222	0.009978	0.018902	vnni/rows
+arena-1	4	--arena 1	OK	0.061216	0.034426	0.010489	0.017783	vnni/rows
+memory-stats	4	--memory-stats 1	OK	0.062152	0.034990	0.012684	0.017817	vnni/rows
+write-chunk-1M(max)	4	--write-chunk 1000000	OK	0.062036	0.035271	0.010379	0.017729	vnni/rows
+write-chunk-64K	4	--write-chunk 65536	OK	0.062592	0.035676	0.011296	0.017912	vnni/rows
+balance-2-rows	4	--balance 2	OK	0.062459	0.035563	0.010169	0.017852	vnni/rows
+balance-2-ring	4	--dist ring --balance 2	OK	0.056652	0.029736	0.010992	0.017807	vnni/ring
+combo-wide-packed	4	--parser wide --bmode packed	OK	0.039061	0.018721	0.008928	0.011523	vnni/rows
+combo-wide-packed-kb256	4	--parser wide --bmode packed --kb 256	OK	0.042103	0.021300	0.009553	0.011568	vnni/rows
+combo-wide-packed-kb256-huge-jeaiii	4	--parser wide --bmode packed --kb 256 --alloc huge --format jeaiii	OK	0.059577	0.041253	0.006134	0.012696	vnni/rows
+combo-wide-packed-kb256-huge-jeaiii-arena	4	--parser wide --bmode packed --kb 256 --alloc huge --format jeaiii --arena 1	OK	0.037736	0.020065	0.005941	0.011821	vnni/rows
+combo-wide-ring-kb256	4	--parser wide --dist ring --kb 256	OK	0.043509	0.022904	0.010283	0.011597	vnni/ring
+combo-wide-ring-kb256-huge-jeaiii-bal2	4	--parser wide --dist ring --kb 256 --alloc huge --format jeaiii --balance 2	OK	0.044475	0.026059	0.007265	0.012676	vnni/ring
+combo-stream-full-kb256	4	--stream 1 --fused 1 --bmode root-packed --parser wide --format jeaiii --arena 1 --kb 256	OK	0.062272	0.050431	0.000607	0.011637	vnni/rows
